@@ -127,13 +127,13 @@
 
   /* 類別：膠囊分段選擇 */
   .seg {
-    position: relative; display: grid; grid-template-columns: repeat(4, 1fr);
+    position: relative; display: grid; grid-template-columns: repeat(var(--n, 4), 1fr);
     padding: 4px; border-radius: 999px; margin: 14px 0;
     background: var(--glass-strong); border: 1px solid var(--edge-low);
   }
   .seg-thumb {
     position: absolute; top: 4px; bottom: 4px; left: 4px;
-    width: calc((100% - 8px) / 4); border-radius: 999px;
+    width: calc((100% - 8px) / var(--n, 4)); border-radius: 999px;
     background: rgba(255,255,255,.9);
     box-shadow: 0 3px 12px rgba(0,0,0,.12), inset 0 1px 0 #fff;
     transition: transform .5s var(--spring);
@@ -180,6 +180,16 @@
     box-shadow: inset 0 1px 0 var(--edge);
   }
   .empty { text-align: center; color: var(--muted); padding: 30px 0; border-radius: 30px; }
+
+  /* 支出／收入切換 */
+  .seg2 { --n: 2; margin: 0 0 14px; }
+  .seg2 button { font-size: 16px; font-weight: 700; min-height: 44px; }
+  .balance {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    border-radius: 999px; padding: 12px 20px; margin: -2px 0 14px;
+    font-size: 14px; color: var(--muted); font-weight: 600;
+  }
+  .balance b { color: var(--text); font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -188,10 +198,17 @@
 <div class="wrap">
   <h1>記帳</h1>
 
-  <div class="summary">
-    <div class="stat glass"><div class="label">今天</div><div class="value" id="today">$0</div></div>
-    <div class="stat glass"><div class="label">本月</div><div class="value" id="month">$0</div></div>
+  <div class="seg seg2 glass" id="typeSeg">
+    <div class="seg-thumb" id="typeThumb"></div>
+    <button type="button" class="press on" data-type="expense">支出</button>
+    <button type="button" class="press" data-type="income">收入</button>
   </div>
+
+  <div class="summary">
+    <div class="stat glass"><div class="label" id="todayLabel">今天支出</div><div class="value" id="today">$0</div></div>
+    <div class="stat glass"><div class="label" id="monthLabel">本月支出</div><div class="value" id="month">$0</div></div>
+  </div>
+  <div class="balance glass"><span>本月結餘（收入 − 支出）</span><b id="bal">$0</b></div>
 
   <form class="card glass" id="form" autocomplete="off">
     <div class="row2">
@@ -201,10 +218,6 @@
 
     <div class="seg" id="seg">
       <div class="seg-thumb" id="thumb"></div>
-      <button type="button" class="press on" data-cat="餐費"><span class="emo">🍜</span>餐費</button>
-      <button type="button" class="press" data-cat="交通"><span class="emo">🚇</span>交通</button>
-      <button type="button" class="press" data-cat="購物"><span class="emo">🛍️</span>購物</button>
-      <button type="button" class="press" data-cat="其他"><span class="emo">📦</span>其他</button>
     </div>
 
     <label class="field"><span>備註</span><input type="text" id="note" placeholder="可不填"></label>
@@ -216,11 +229,17 @@
 
 <script>
   const KEY = 'expense-records';
-  const EMOJI = { '餐費': '🍜', '交通': '🚇', '購物': '🛍️', '其他': '📦' };
-  const CATS = Object.keys(EMOJI);
+  const TAB_KEY = 'expense-tab';
+  const TYPES = {
+    expense: { name: '支出', cats: { '餐費': '🍜', '交通': '🚇', '購物': '🛍️', '其他': '📦' } },
+    income:  { name: '收入', cats: { '薪資': '💼', '社群': '📱', '買賣': '🤝' } }
+  };
   let records = [];
-  let category = '餐費';
   try { records = JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) { records = []; }
+  records.forEach(r => { if (!r.type) r.type = 'expense'; }); // 舊紀錄都是支出
+  let type = 'expense';
+  try { const t = localStorage.getItem(TAB_KEY); if (TYPES[t]) type = t; } catch (e) {}
+  let category = '';
 
   // 讓 iPhone 上的 :active 按壓效果生效
   document.addEventListener('touchstart', () => {}, { passive: true });
@@ -230,18 +249,16 @@
     catch (e) { alert('儲存失敗，資料可能無法保留。'); }
   }
   const pad = n => String(n).padStart(2, '0');
-  function todayStr() {
-    const d = new Date();
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  }
-  const money = n => '$' + n.toLocaleString('zh-TW', { maximumFractionDigits: 2 });
+  const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const todayStr = () => ymd(new Date());
+  const money = n => (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('zh-TW', { maximumFractionDigits: 2 });
   const esc = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
   function dayLabel(ds) {
     const t = todayStr();
     if (ds === t) return '今天';
     const y = new Date(); y.setDate(y.getDate() - 1);
-    if (ds === `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}`) return '昨天';
+    if (ds === ymd(y)) return '昨天';
     const [Y, M, D] = ds.split('-').map(Number);
     const w = WEEK[new Date(Y, M - 1, D).getDay()];
     return (String(Y) === t.slice(0, 4) ? '' : Y + '/') + `${M}/${D}（${w}）`;
@@ -257,45 +274,87 @@
 
   function render() {
     const today = todayStr(), month = today.slice(0, 7);
-    let tSum = 0, mSum = 0;
+    let tSum = 0, mSum = 0, mIn = 0, mOut = 0;
     records.forEach(r => {
+      const inMonth = r.date.slice(0, 7) === month;
+      if (inMonth) { if (r.type === 'income') mIn += r.amount; else mOut += r.amount; }
+      if (r.type !== type) return;
       if (r.date === today) tSum += r.amount;
-      if (r.date.slice(0, 7) === month) mSum += r.amount;
+      if (inMonth) mSum += r.amount;
     });
     setStat('today', money(tSum));
     setStat('month', money(mSum));
+    setStat('bal', money(mIn - mOut));
 
+    const sign = type === 'income' ? '+' : '';
+    const shown = records.filter(r => r.type === type);
     const list = document.getElementById('list');
-    if (!records.length) {
-      list.innerHTML = '<div class="empty glass">還沒有任何紀錄</div>';
+    if (!shown.length) {
+      list.innerHTML = `<div class="empty glass">還沒有任何${TYPES[type].name}紀錄</div>`;
       return;
     }
     const groups = {};
-    records.forEach(r => (groups[r.date] = groups[r.date] || []).push(r));
+    shown.forEach(r => (groups[r.date] = groups[r.date] || []).push(r));
     list.innerHTML = Object.keys(groups).sort().reverse().map(d => {
       const items = groups[d].sort((a, b) => b.id - a.id);
       const sum = items.reduce((s, r) => s + r.amount, 0);
       return `<div class="day">
-        <div class="day-head"><span>${dayLabel(d)}</span><span>${money(sum)}</span></div>
+        <div class="day-head"><span>${dayLabel(d)}</span><span>${sign}${money(sum)}</span></div>
         <div class="card glass">${items.map(r => `
           <div class="item" data-id="${r.id}">
-            <div class="bubble">${EMOJI[r.category] || '📦'}</div>
+            <div class="bubble">${TYPES[r.type].cats[r.category] || '📦'}</div>
             <div class="info"><div class="cat">${esc(r.category)}</div>${r.note ? `<div class="note">${esc(r.note)}</div>` : ''}</div>
-            <div class="amt">${money(r.amount)}</div>
+            <div class="amt">${sign}${money(r.amount)}</div>
             <button class="del press" aria-label="刪除">✕</button>
           </div>`).join('')}
         </div></div>`;
     }).join('');
   }
 
-  // 類別切換
+  // 類別按鈕（依支出／收入切換）
+  const seg = document.getElementById('seg');
   const thumb = document.getElementById('thumb');
-  document.getElementById('seg').addEventListener('click', e => {
+  function buildCats() {
+    const cats = TYPES[type].cats;
+    const names = Object.keys(cats);
+    category = names[0];
+    seg.style.setProperty('--n', names.length);
+    seg.querySelectorAll('button').forEach(b => b.remove());
+    names.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'press' + (i === 0 ? ' on' : '');
+      b.dataset.cat = c;
+      b.innerHTML = `<span class="emo">${cats[c]}</span>${c}`;
+      seg.appendChild(b);
+    });
+    thumb.style.transform = 'translateX(0)';
+  }
+  seg.addEventListener('click', e => {
     const btn = e.target.closest('button');
     if (!btn) return;
     category = btn.dataset.cat;
-    document.querySelectorAll('#seg button').forEach(b => b.classList.toggle('on', b === btn));
-    thumb.style.transform = `translateX(${CATS.indexOf(category) * 100}%)`;
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+    thumb.style.transform = `translateX(${Object.keys(TYPES[type].cats).indexOf(category) * 100}%)`;
+  });
+
+  // 支出／收入切換
+  const typeSeg = document.getElementById('typeSeg');
+  const typeThumb = document.getElementById('typeThumb');
+  function setType(t) {
+    type = t;
+    try { localStorage.setItem(TAB_KEY, t); } catch (e) {}
+    typeSeg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.type === t));
+    typeThumb.style.transform = `translateX(${t === 'income' ? 100 : 0}%)`;
+    document.getElementById('todayLabel').textContent = '今天' + TYPES[t].name;
+    document.getElementById('monthLabel').textContent = '本月' + TYPES[t].name;
+    document.querySelector('.add').textContent = '新增' + TYPES[t].name;
+    buildCats();
+    render();
+  }
+  typeSeg.addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (btn && btn.dataset.type !== type) setType(btn.dataset.type);
   });
 
   document.getElementById('form').addEventListener('submit', e => {
@@ -304,6 +363,7 @@
     if (!(amount > 0)) { alert('請輸入大於 0 的金額'); return; }
     records.push({
       id: Date.now(),
+      type,
       date: document.getElementById('date').value,
       amount, category,
       note: document.getElementById('note').value.trim()
@@ -327,7 +387,7 @@
   });
 
   document.getElementById('date').value = todayStr();
-  render();
+  setType(type);
 </script>
 </body>
 </html>
